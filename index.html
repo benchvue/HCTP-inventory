@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HCTP Inventory · Laptops</title>
+<!--
+  HCTP 노트북 자산 관리 (단일 파일)
+  ───────────────────────────────────────────
+  · 공개 화면(핸드폰 세로 최적화): 로그인 없이 "오늘 현황" — 어느 클래스/선생님이 몇 대, 창고 몇 대
+  · 관리자 화면(데스크톱): benchvue101@gmail.com 로그인 시 모델/시리얼 편집 + 배정/반납
+  · 데이터: Drive 2026/db/hctp-inventory-db.json (캠프와 같은 폴더, 링크 공개)
+  · 키: 같은 repo의 site-keys.js(캠프 것 복사)에서 apiKey를 읽음. 없으면 기본 현황만 표시
+  설정 1회:
+   1) Cloud Console → OAuth 클라이언트(아래 clientId) → Authorized JavaScript origins에
+      https://benchvue.github.io 추가
+   2) 캠프 repo의 site-keys.js를 이 repo에도 복사 (apiKey 재사용 — referrer 제한이 도메인 전체라 그대로 동작)
+   3) 관리자 첫 로그인 → db 파일 자동 생성/공개
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=Noto+Sans+KR:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="site-keys.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root{
+    --paper:#f7f4ec; --card:#ffffff; --ink:#2a251d; --muted:#867d6d;
+    --gold:#a9812f; --gold-soft:#c8ab6e; --line:#e6dfcd; --err:#b4404f; --ok:#1e7a46;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);
+    font-family:'Noto Sans KR',-apple-system,sans-serif;font-weight:300;
+    min-height:100vh;padding-bottom:70px}
+
+  /* ── 헤더 (캠프 사이트 로고 스타일) ── */
+  header{text-align:center;padding:40px 16px 10px}
+  .logo{font-family:'Cormorant Garamond',Georgia,serif;font-weight:400;
+    font-size:clamp(34px,8vw,52px);letter-spacing:.12em;color:var(--gold)}
+  .logo em{font-style:italic;font-size:.55em;letter-spacing:.08em;color:var(--ink)}
+  .tagline{margin-top:6px;font-size:12.5px;letter-spacing:.28em;text-transform:uppercase;color:var(--muted)}
+  .rule{width:64px;height:1px;margin:20px auto 0;
+    background:linear-gradient(90deg,transparent,var(--gold-soft),transparent)}
+
+  .wrap{max-width:720px;margin:0 auto;padding:0 14px}
+  @media(min-width:980px){.wrap{max-width:1060px}}   /* 관리자 데스크톱 여유 폭 */
+
+  .sec{font-family:'Cormorant Garamond',Georgia,serif;font-style:italic;font-weight:400;
+    font-size:24px;letter-spacing:.06em;color:var(--gold);margin:30px 2px 12px}
+  .sec small{font-style:normal;font-family:'Noto Sans KR';font-size:12px;
+    letter-spacing:.04em;color:var(--muted)}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:18px;
+    padding:16px;box-shadow:0 14px 34px -24px rgba(90,70,30,.45)}
+
+  /* ── 필터 줄 ── */
+  .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 2px 12px}
+  .chip{border:1px solid var(--gold);border-radius:999px;background:none;color:var(--gold);
+    font-family:inherit;font-size:12.5px;letter-spacing:.06em;padding:7px 14px;cursor:pointer;
+    -webkit-tap-highlight-color:transparent}
+  .chip.on{background:var(--gold);color:#fff}
+  select.sorter{margin-left:auto;font-family:inherit;font-size:12.5px;color:var(--ink);
+    border:1px solid var(--line);border-radius:10px;padding:7px 10px;background:#fff}
+
+  /* ── 현황 그룹 행 ── */
+  .grp{border:1px solid var(--line);border-radius:16px;background:#fff;margin-bottom:10px;
+    overflow:hidden;box-shadow:0 10px 26px -22px rgba(90,70,30,.5)}
+  .grp-head{display:flex;align-items:center;gap:12px;padding:14px 14px;cursor:pointer;
+    -webkit-tap-highlight-color:transparent}
+  .grp-head:active{background:#fdfbf4}
+  .grp-main{flex:1;min-width:0}
+  .grp-class{font-size:15.5px;font-weight:500;letter-spacing:.01em}
+  .grp-teacher{margin-top:3px;font-size:12.5px;color:var(--muted);letter-spacing:.03em}
+  .grp-count{flex:0 0 auto;text-align:center;min-width:56px}
+  .grp-count b{display:block;font-family:'Cormorant Garamond',serif;font-weight:600;
+    font-size:26px;line-height:1;color:var(--gold)}
+  .grp-count span{font-size:10px;letter-spacing:.2em;color:var(--muted);text-transform:uppercase}
+  .grp-arrow{flex:0 0 auto;color:var(--gold-soft);transition:transform .25s}
+  .grp.open .grp-arrow{transform:rotate(180deg)}
+  .grp.store .grp-class{color:var(--muted)}
+  .grp.store .grp-count b{color:var(--gold-soft)}
+
+  .grp-body{display:none;border-top:1px dashed var(--line);padding:12px 14px;background:#fdfcf8}
+  .grp.open .grp-body{display:block}
+  .lap{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
+    padding:8px 2px;border-bottom:1px dotted var(--line);font-size:13px}
+  .lap:last-child{border-bottom:none}
+  .lap .lid{font-weight:500;color:var(--gold);letter-spacing:.05em;min-width:36px}
+  .lap .mdl{color:var(--ink)}
+  .lap .sn{color:var(--muted);font-size:12px;letter-spacing:.03em}
+  .lap .per{margin-left:auto;font-size:11.5px;color:var(--muted);white-space:nowrap}
+  .totals{margin:14px 2px 0;font-size:13px;color:var(--muted);text-align:center;letter-spacing:.04em}
+  .totals b{color:var(--gold)}
+  .notice{margin:10px 2px;font-size:12px;color:var(--muted);line-height:1.7}
+
+  /* ── 로그인 / 관리자 ── */
+  .signin-row{text-align:center;margin:26px 0 8px}
+  .btn-gold{border:1px solid var(--gold);background:var(--gold);color:#fff;border-radius:999px;
+    font-family:inherit;font-size:14px;letter-spacing:.05em;padding:11px 26px;cursor:pointer}
+  .btn-gold:hover{background:#fff;color:var(--gold)}
+  .btn-gold:disabled{opacity:.45;cursor:default}
+  .mini{border:1px solid var(--gold);background:none;color:var(--gold);border-radius:999px;
+    font-family:inherit;font-size:12.5px;padding:7px 14px;cursor:pointer}
+  .mini:hover{background:var(--gold);color:#fff}
+  .btn-plain{border:none;background:none;color:var(--muted);font-family:inherit;
+    font-size:12.5px;cursor:pointer;text-decoration:underline}
+  .who{font-size:12.5px;color:var(--muted);margin-top:8px}
+  .who b{color:var(--gold)}
+
+  #adminRoot{display:none}
+  .admin-grid{display:grid;grid-template-columns:1fr;gap:16px}
+  @media(min-width:980px){.admin-grid{grid-template-columns:1fr 1fr}}
+
+  table.reg{width:100%;border-collapse:collapse;font-size:13px}
+  table.reg th{font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);
+    text-align:left;padding:6px 6px;border-bottom:1px solid var(--line)}
+  table.reg td{padding:5px 6px;border-bottom:1px dotted var(--line)}
+  table.reg input{width:100%;font-family:inherit;font-size:13px;border:1px solid var(--line);
+    border-radius:8px;padding:6px 8px;background:#fdfcf8}
+  table.reg input:focus{outline:1px solid var(--gold-soft)}
+  table.reg .lid-cell{color:var(--gold);font-weight:500;white-space:nowrap}
+
+  .frm{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .frm label{display:block;font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--muted);margin-bottom:4px}
+  .frm select,.frm input{width:100%;font-family:inherit;font-size:13.5px;color:var(--ink);
+    border:1px solid var(--line);border-radius:10px;padding:9px 10px;background:#fdfcf8}
+  .frm .full{grid-column:1/-1}
+  .season-row{display:flex;gap:6px;flex-wrap:wrap}
+  .pickgrid{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .pick{border:1px solid var(--line);border-radius:12px;background:#fdfcf8;color:var(--ink);
+    font-family:inherit;font-size:12px;padding:8px 10px;cursor:pointer;text-align:left;
+    -webkit-tap-highlight-color:transparent}
+  .pick small{display:block;color:var(--muted);font-size:10.5px;margin-top:2px}
+  .pick.sel{border-color:var(--gold);box-shadow:0 0 0 2px rgba(200,171,110,.35);background:#fff}
+  .pick.inuse{border-style:dashed}
+  .subhead{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);
+    margin:16px 0 4px;font-weight:500}
+  .hintline{font-size:11.5px;color:var(--muted);line-height:1.7;margin-top:10px}
+  .histbox{margin-top:10px;font-size:12px;color:var(--muted);border-top:1px dashed var(--line);
+    padding-top:8px;line-height:1.8;display:none}
+  .act-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+
+  .toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(20px);
+    background:#2a251d;color:#f7f4ec;font-size:13px;border-radius:999px;padding:11px 22px;
+    opacity:0;pointer-events:none;transition:all .3s;z-index:60;max-width:92vw;text-align:center}
+  .toast.show{opacity:1;transform:translateX(-50%)}
+  footer{text-align:center;margin-top:46px;font-size:11px;letter-spacing:.2em;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">HCTP <em>Inventory</em></div>
+  <div class="tagline">Laptop Asset Tracker</div>
+  <div class="rule"></div>
+</header>
+
+<div class="wrap">
+
+  <!-- ══════════ 오늘 현황 (공개) ══════════ -->
+  <h2 class="sec">오늘 현황 <small id="asOf"></small></h2>
+
+  <div class="filters">
+    <button class="chip on" data-season="">전체</button>
+    <button class="chip" data-season="Spring">Spring</button>
+    <button class="chip" data-season="Summer">Summer</button>
+    <button class="chip" data-season="Fall">Fall</button>
+    <button class="chip" data-season="Winter">Winter</button>
+    <select class="sorter" id="sortSel">
+      <option value="count">수량순</option>
+      <option value="class">클래스순</option>
+      <option value="teacher">선생님순</option>
+    </select>
+  </div>
+
+  <div id="statusList"><div class="card" style="text-align:center;color:var(--muted)">불러오는 중…</div></div>
+  <p class="totals" id="totals"></p>
+  <p class="notice" id="dbNotice" style="display:none"></p>
+
+  <!-- ══════════ 관리자 ══════════ -->
+  <div class="signin-row" id="signinRow">
+    <button class="btn-gold" id="signinBtn" disabled>G · 관리자 로그인</button>
+    <div class="who" id="whoAmI">관리자(임종빈)만 편집할 수 있습니다 · 현황 보기는 로그인 불필요</div>
+  </div>
+
+  <div id="adminRoot">
+    <h2 class="sec">Admin <small>· 모델/시리얼 · 배정/반납</small></h2>
+    <div class="admin-grid">
+
+      <!-- 노트북 등록부 -->
+      <div class="card">
+        <div class="subhead">노트북 등록부 (모델 · Serial)</div>
+        <table class="reg">
+          <thead><tr><th style="width:44px">ID</th><th>모델</th><th>Serial Number</th></tr></thead>
+          <tbody id="regBody"></tbody>
+        </table>
+        <div class="act-row">
+          <button class="mini" id="addLaptopBtn">+ 노트북 추가</button>
+          <button class="btn-gold" id="saveRegBtn" style="padding:9px 22px">등록부 저장</button>
+        </div>
+        <p class="hintline">기본 모델 <b>Latitude 7400</b>이 미리 채워져 있습니다. Serial만 실물 보고 입력하면 됩니다.</p>
+      </div>
+
+      <!-- 배정 / 반납 -->
+      <div class="card">
+        <div class="subhead">배정 / 반납</div>
+        <div class="hintline" style="margin-top:0">노트북을 탭해서 선택(복수 가능) → 아래 정보 입력 → [선택 배정]. 창고로 되돌리려면 [창고 반납].</div>
+
+        <div class="subhead" style="margin-top:14px">📦 보관중 — Room 213 Closet</div>
+        <div class="pickgrid" id="storePick"></div>
+
+        <div class="subhead">💻 사용중 (탭하면 수정/반납 대상으로 선택)</div>
+        <div class="pickgrid" id="usePick"></div>
+
+        <div class="histbox" id="histBox"></div>
+
+        <div class="frm">
+          <div class="full">
+            <label>클래스 / 장소</label>
+            <select id="fCls"></select>
+          </div>
+          <div>
+            <label>선생님</label>
+            <select id="fTeacher"></select>
+          </div>
+          <div>
+            <label>연도</label>
+            <input type="number" id="fYear" min="2024" max="2040">
+          </div>
+          <div class="full">
+            <label>계절</label>
+            <div class="season-row" id="fSeason">
+              <button type="button" class="chip" data-v="Spring">Spring</button>
+              <button type="button" class="chip" data-v="Summer">Summer</button>
+              <button type="button" class="chip on" data-v="Fall">Fall</button>
+              <button type="button" class="chip" data-v="Winter">Winter</button>
+            </div>
+          </div>
+          <div>
+            <label>사용 시작</label>
+            <input type="date" id="fStart">
+          </div>
+          <div>
+            <label>사용 끝 (예정)</label>
+            <input type="date" id="fEnd">
+          </div>
+        </div>
+
+        <div class="act-row">
+          <button class="btn-gold" id="assignBtn" style="padding:10px 24px">선택 배정 →</button>
+          <button class="mini" id="returnBtn">📦 창고 반납</button>
+          <button class="btn-plain" id="clearSelBtn">선택 해제</button>
+        </div>
+      </div>
+
+    </div>
+    <div class="act-row" style="justify-content:center;margin-top:18px">
+      <button class="btn-plain" id="signoutBtn">Sign out</button>
+    </div>
+  </div>
+
+</div>
+
+<footer>HCTP · HANAIM COMMUNITY TUTORIAL PROGRAM</footer>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* ══════════════ CONFIG ══════════════ */
+const CONFIG = {
+  clientId: "1075824030904-a7ar62oc9b7deq2sqah1a58ft0tsh4v3.apps.googleusercontent.com",
+  apiKey: (window.HCTP_KEYS && window.HCTP_KEYS.apiKey) ||
+          (window.INV_KEYS  && window.INV_KEYS.apiKey)  || "PASTE_BROWSER_API_KEY_HERE",
+  rootFolder: "1Roissh94L1dbhzTSnYEN5IbchacskgbH",   /* 캠프 2026 폴더 (공개) */
+  dbFolderName: "db",
+  dbFileName: "hctp-inventory-db.json",
+  adminEmail: "benchvue101@gmail.com",
+  defaultModel: "Latitude 7400",
+  storageLabel: "Room 213 Closet"
+};
+const CLASSES = [
+  "Taekwondo","Build Your Website","STEM Crafts","AI Code with Scratch",
+  "Adventure with Paper Mache","Cooking Adventure Class","Sports & Games",
+  "CodeBridge","Math Tutoring","Robotics with mBot2","EM Pray","선생님 집"
+];
+const TEACHERS = [
+  "Hae-young Chun","Sungjae Ellen Lee","Mihee Kang","Jongbin Ym","Henry Kwon","Clement Skirpan"
+];
+const SEASONS = ["Spring","Summer","Fall","Winter"];
+
+const $ = id => document.getElementById(id);
+let toastT = null;
+function toast(msg){
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(()=>t.classList.remove("show"), 3600);
+}
+const pad = n => String(n).padStart(2,"0");
+const todayISO = () => { const d=new Date(); return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); };
+const seasonOfToday = () => { const m=new Date().getMonth()+1;
+  return m<=2||m===12 ? "Winter" : m<=5 ? "Spring" : m<=8 ? "Summer" : "Fall"; };
+
+/* ══════════════ 기본 데이터 (db 없을 때 / 최초 시딩) ══════════════ */
+function seedDb(){
+  const laps = [];
+  for (let i=1;i<=20;i++){
+    laps.push({ id:"L"+pad(i), model:CONFIG.defaultModel, serial:"",
+      cls:"", teacher:"", season:"", year:"", start:"", end:"", history:[] });
+  }
+  laps[0].serial = "32773368494";                       /* 예시 시리얼 */
+  const assign = (idx, cls, teacher) => { const l=laps[idx];
+    l.cls=cls; l.teacher=teacher; l.season="Fall"; l.year=2026; l.start="2026-09-01"; l.end=""; };
+  [0,1,2,3].forEach(i=>assign(i,"CodeBridge","Mihee Kang"));                 /* 4대 */
+  [4,5,6,7,8].forEach(i=>assign(i,"Robotics with mBot2","Jongbin Ym"));      /* 5대 */
+  assign(9,"선생님 집","Jongbin Ym");                                        /* 1대 */
+  [10,11].forEach(i=>assign(i,"EM Pray","Henry Kwon"));                      /* 2대 */
+  /* 나머지 L13~L20 = 창고 */
+  return { v:1, updated:0, by:"", laptops:laps };
+}
+
+/* ══════════════ 상태 ══════════════ */
+let db = null, dbFileId = null, dbFolderId = null, usingSeed = false;
+let accessToken = null, myEmail = "", isAdmin = false, tokenClient = null;
+let seasonFilter = "", sortMode = "count";
+let selected = new Set();           /* 관리자: 선택된 노트북 id */
+
+/* ══════════════ 공개 읽기 (API 키) ══════════════ */
+async function keyList(q){
+  const u = "https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(q) +
+    "&fields=" + encodeURIComponent("files(id,name)") + "&pageSize=100&key=" + CONFIG.apiKey;
+  const r = await fetch(u); if(!r.ok) throw new Error("list "+r.status);
+  return (await r.json()).files || [];
+}
+async function publicLoad(){
+  if (CONFIG.apiKey.indexOf("PASTE_") === 0) throw new Error("no-key");
+  const folders = await keyList("'"+CONFIG.rootFolder+"' in parents and name='"+CONFIG.dbFolderName+
+    "' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+  if(!folders.length) throw new Error("db 폴더 없음");
+  dbFolderId = folders[0].id;
+  const files = await keyList("'"+dbFolderId+"' in parents and name='"+CONFIG.dbFileName+"' and trashed=false");
+  if(!files.length) throw new Error("no-file");
+  dbFileId = files[0].id;
+  const r = await fetch("https://www.googleapis.com/drive/v3/files/"+dbFileId+"?alt=media&key="+CONFIG.apiKey);
+  if(!r.ok) throw new Error("read "+r.status);
+  db = await r.json();
+}
+
+/* ══════════════ 현황 렌더 ══════════════ */
+function groupsOf(){
+  const g = {};                                   /* key = cls|teacher */
+  const store = [];
+  (db.laptops||[]).forEach(l=>{
+    if(!l.cls){ store.push(l); return; }
+    if(seasonFilter && l.season !== seasonFilter) return;
+    const k = l.cls + "¦" + l.teacher;
+    (g[k] = g[k] || { cls:l.cls, teacher:l.teacher, laps:[] }).laps.push(l);
+  });
+  let rows = Object.values(g);
+  if(sortMode==="class")   rows.sort((a,b)=> a.cls.localeCompare(b.cls) || a.teacher.localeCompare(b.teacher));
+  if(sortMode==="teacher") rows.sort((a,b)=> a.teacher.localeCompare(b.teacher) || a.cls.localeCompare(b.cls));
+  if(sortMode==="count")   rows.sort((a,b)=> b.laps.length - a.laps.length || a.cls.localeCompare(b.cls));
+  return { rows, store };
+}
+const esc = t => String(t||"").replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function lapLine(l){
+  const per = [l.season && (l.season+" "+(l.year||"")),
+               l.start && (l.start + " ~ " + (l.end||""))].filter(Boolean).join(" · ");
+  return "<div class='lap'><span class='lid'>"+l.id+"</span>"+
+    "<span class='mdl'>"+esc(l.model||CONFIG.defaultModel)+"</span>"+
+    "<span class='sn'>SN "+(esc(l.serial)||"—")+"</span>"+
+    (per?"<span class='per'>"+esc(per)+"</span>":"")+"</div>";
+}
+function renderStatus(){
+  const box = $("statusList");
+  if(!db){ box.innerHTML=""; return; }
+  const { rows, store } = groupsOf();
+  let html = "";
+  rows.forEach(r=>{
+    html += "<div class='grp'><div class='grp-head' role='button' tabindex='0'>"+
+      "<div class='grp-main'><div class='grp-class'>"+esc(r.cls)+"</div>"+
+      "<div class='grp-teacher'>"+esc(r.teacher)+" 선생님</div></div>"+
+      "<div class='grp-count'><b>"+r.laps.length+"</b><span>대</span></div>"+
+      "<svg class='grp-arrow' width='18' height='18' viewBox='0 0 24 24' fill='none' "+
+      "stroke='currentColor' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg></div>"+
+      "<div class='grp-body'>"+ r.laps.map(lapLine).join("") +"</div></div>";
+  });
+  html += "<div class='grp store'><div class='grp-head' role='button' tabindex='0'>"+
+    "<div class='grp-main'><div class='grp-class'>📦 "+esc(CONFIG.storageLabel)+"</div>"+
+    "<div class='grp-teacher'>창고 보관</div></div>"+
+    "<div class='grp-count'><b>"+store.length+"</b><span>대</span></div>"+
+    "<svg class='grp-arrow' width='18' height='18' viewBox='0 0 24 24' fill='none' "+
+    "stroke='currentColor' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg></div>"+
+    "<div class='grp-body'>"+ (store.map(lapLine).join("")||"<div class='lap'>없음</div>") +"</div></div>";
+  box.innerHTML = html;
+
+  box.querySelectorAll(".grp-head").forEach(h=>{
+    h.addEventListener("click", ()=> h.parentElement.classList.toggle("open"));
+    h.addEventListener("keydown", e=>{ if(e.key==="Enter"||e.key===" "){e.preventDefault();h.click();} });
+  });
+
+  const total = (db.laptops||[]).length;
+  const inUse = total - store.length -
+    (seasonFilter ? (db.laptops||[]).filter(l=>l.cls && l.season!==seasonFilter).length : 0);
+  $("totals").innerHTML = "사용중 <b>"+((db.laptops||[]).filter(l=>l.cls).length)+"</b>대 · "+
+    "창고 <b>"+store.length+"</b>대 · 총 <b>"+total+"</b>대"+
+    (seasonFilter?" <span style='color:var(--muted)'>("+seasonFilter+" 필터 표시중)</span>":"");
+  $("asOf").textContent = "· " + todayISO() + " 기준";
+}
+
+/* 필터 / 정렬 */
+document.querySelectorAll(".filters .chip").forEach(c=>{
+  c.addEventListener("click", ()=>{
+    document.querySelectorAll(".filters .chip").forEach(x=>x.classList.remove("on"));
+    c.classList.add("on");
+    seasonFilter = c.dataset.season || "";
+    renderStatus();
+  });
+});
+$("sortSel").addEventListener("change", e=>{ sortMode = e.target.value; renderStatus(); });
+
+/* ══════════════ Google 로그인 (관리자) ══════════════ */
+const authHeaders = ()=>({ Authorization:"Bearer "+accessToken });
+function initGis(){
+  if(!(window.google && google.accounts && google.accounts.oauth2)){ setTimeout(initGis,300); return; }
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CONFIG.clientId,
+    scope: "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email",
+    callback: onToken
+  });
+  $("signinBtn").disabled = false;
+}
+$("signinBtn").addEventListener("click", ()=> tokenClient && tokenClient.requestAccessToken());
+async function onToken(resp){
+  if(resp.error){ toast("⚠ 로그인 실패: "+resp.error); return; }
+  accessToken = resp.access_token;
+  try{
+    const me = await fetch("https://www.googleapis.com/oauth2/v2/userinfo",{headers:authHeaders()}).then(r=>r.json());
+    myEmail = (me.email||"").toLowerCase();
+  }catch(e){ toast("⚠ 사용자 확인 실패"); return; }
+  isAdmin = myEmail === CONFIG.adminEmail.toLowerCase();
+  if(!isAdmin){
+    $("whoAmI").innerHTML = myEmail + " — <span style='color:var(--err)'>관리자 계정이 아닙니다</span>";
+    toast("관리자(benchvue101@gmail.com)만 편집할 수 있습니다");
+    return;
+  }
+  $("whoAmI").innerHTML = "Signed in: <b>임종빈</b> · "+myEmail+" · <b>ADMIN</b>";
+  $("signinBtn").style.display = "none";
+  try{
+    await adminLoadDb();
+    $("adminRoot").style.display = "block";
+    renderAdmin();
+    renderStatus();
+    toast("관리자 모드 ✓");
+  }catch(e){ toast("⚠ "+e.message); }
+}
+$("signoutBtn").addEventListener("click", ()=>{
+  accessToken=null; isAdmin=false; selected.clear();
+  $("adminRoot").style.display="none";
+  $("signinBtn").style.display="";
+  $("whoAmI").textContent="관리자(임종빈)만 편집할 수 있습니다 · 현황 보기는 로그인 불필요";
+});
+
+/* ══════════════ 관리자: db 로드/생성/저장 (OAuth) ══════════════ */
+async function authList(q){
+  const u = "https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(q) +
+    "&fields=" + encodeURIComponent("files(id,name)") + "&pageSize=100";
+  const r = await fetch(u,{headers:authHeaders()});
+  if(!r.ok) throw new Error("Drive 목록 실패 ("+r.status+")");
+  return (await r.json()).files || [];
+}
+async function adminLoadDb(){
+  if(!dbFolderId){
+    const fs = await authList("'"+CONFIG.rootFolder+"' in parents and name='"+CONFIG.dbFolderName+
+      "' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+    if(!fs.length) throw new Error("Drive에 db 폴더가 없습니다 (2026/db)");
+    dbFolderId = fs[0].id;
+  }
+  const files = await authList("'"+dbFolderId+"' in parents and name='"+CONFIG.dbFileName+"' and trashed=false");
+  if(files.length){
+    dbFileId = files[0].id;
+    db = await fetch("https://www.googleapis.com/drive/v3/files/"+dbFileId+"?alt=media",
+      {headers:authHeaders()}).then(r=>r.json());
+  }else{
+    db = db && !usingSeed ? db : seedDb();        /* 최초: 시드로 생성 */
+    const meta = { name: CONFIG.dbFileName, parents: [dbFolderId] };
+    const bound = "inv" + Math.random().toString(36).slice(2);
+    const body = "--"+bound+"\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n"+
+      JSON.stringify(meta)+"\r\n--"+bound+"\r\nContent-Type: application/json\r\n\r\n"+
+      JSON.stringify(db)+"\r\n--"+bound+"--";
+    const r = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id",
+      { method:"POST", headers:Object.assign({"Content-Type":"multipart/related; boundary="+bound},authHeaders()), body });
+    if(!r.ok) throw new Error("db 생성 실패 ("+r.status+")");
+    dbFileId = (await r.json()).id;
+    try{                                           /* 공개 읽기용 권한 */
+      await fetch("https://www.googleapis.com/drive/v3/files/"+dbFileId+"/permissions",
+        { method:"POST", headers:Object.assign({"Content-Type":"application/json"},authHeaders()),
+          body: JSON.stringify({role:"reader",type:"anyone"}) });
+    }catch(e){}
+    toast("인벤토리 db 생성 완료 (기본 배정 시딩)");
+  }
+  usingSeed = false;
+  $("dbNotice").style.display = "none";
+}
+async function saveDb(){
+  db.updated = Date.now(); db.by = myEmail;
+  const r = await fetch("https://www.googleapis.com/upload/drive/v3/files/"+dbFileId+"?uploadType=media",
+    { method:"PATCH", headers:Object.assign({"Content-Type":"application/json"},authHeaders()),
+      body: JSON.stringify(db) });
+  if(!r.ok) throw new Error("저장 실패 ("+r.status+") — 재로그인 후 다시 시도");
+}
+
+/* ══════════════ 관리자 UI ══════════════ */
+function fillSelect(sel, items, placeholder){
+  sel.innerHTML = (placeholder?"<option value=''>"+placeholder+"</option>":"") +
+    items.map(x=>"<option>"+esc(x)+"</option>").join("");
+}
+function renderAdmin(){
+  /* 등록부 */
+  const tb = $("regBody");
+  tb.innerHTML = db.laptops.map((l,i)=>
+    "<tr><td class='lid-cell'>"+l.id+"</td>"+
+    "<td><input data-i='"+i+"' data-f='model' value='"+esc(l.model)+"'></td>"+
+    "<td><input data-i='"+i+"' data-f='serial' value='"+esc(l.serial)+"' placeholder='예: 32773368494'></td></tr>"
+  ).join("");
+  /* 배정 폼 */
+  fillSelect($("fCls"), CLASSES, "클래스 선택");
+  fillSelect($("fTeacher"), TEACHERS, "선생님 선택");
+  if(!$("fYear").value) $("fYear").value = new Date().getFullYear();
+  if(!$("fStart").value) $("fStart").value = todayISO();
+  setSeasonChips(seasonOfToday());
+  renderPicks();
+}
+function setSeasonChips(v){
+  document.querySelectorAll("#fSeason .chip").forEach(c=>
+    c.classList.toggle("on", c.dataset.v===v));
+}
+function curSeason(){
+  const on = document.querySelector("#fSeason .chip.on");
+  return on ? on.dataset.v : "Fall";
+}
+document.querySelectorAll("#fSeason .chip").forEach(c=>
+  c.addEventListener("click", ()=> setSeasonChips(c.dataset.v)));
+
+function pickBtn(l){
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "pick" + (selected.has(l.id)?" sel":"") + (l.cls?" inuse":"");
+  b.innerHTML = "<b style='color:var(--gold)'>"+l.id+"</b> · "+esc(l.model)+
+    "<small>SN "+(esc(l.serial)||"—")+(l.cls?" · "+esc(l.cls)+" · "+esc(l.teacher):"")+"</small>";
+  b.addEventListener("click", ()=>{
+    if(selected.has(l.id)) selected.delete(l.id); else selected.add(l.id);
+    renderPicks();
+  });
+  return b;
+}
+function renderPicks(){
+  const sp = $("storePick"), up = $("usePick");
+  sp.innerHTML=""; up.innerHTML="";
+  db.laptops.forEach(l=> (l.cls?up:sp).appendChild(pickBtn(l)) );
+  if(!sp.children.length) sp.innerHTML = "<span style='font-size:12px;color:var(--muted)'>보관중 없음</span>";
+  if(!up.children.length) up.innerHTML = "<span style='font-size:12px;color:var(--muted)'>사용중 없음</span>";
+  /* 단일 선택이면 그 노트북의 현재값/이력 표시 + 폼 프리필 */
+  const hb = $("histBox");
+  if(selected.size===1){
+    const l = db.laptops.find(x=>x.id===[...selected][0]);
+    if(l.cls){ $("fCls").value=l.cls; $("fTeacher").value=l.teacher;
+      if(l.year)$("fYear").value=l.year; if(l.season)setSeasonChips(l.season);
+      $("fStart").value=l.start||""; $("fEnd").value=l.end||""; }
+    const hist = (l.history||[]).slice(-5).reverse().map(h=>
+      "· "+esc(h.cls)+" / "+esc(h.teacher)+" ("+esc(h.season)+" "+(h.year||"")+", "+
+      esc(h.start||"?")+" ~ "+esc(h.end||"?")+")").join("<br>");
+    hb.innerHTML = "<b style='color:var(--gold)'>"+l.id+"</b> 사용 이력" + (hist?"<br>"+hist:" — 기록 없음");
+    hb.style.display = "block";
+  } else hb.style.display = "none";
+}
+
+/* 등록부 저장 */
+$("saveRegBtn").addEventListener("click", async ()=>{
+  document.querySelectorAll("#regBody input").forEach(inp=>{
+    db.laptops[+inp.dataset.i][inp.dataset.f] = inp.value.trim();
+  });
+  try{ await saveDb(); renderStatus(); renderPicks(); toast("등록부 저장 ✓"); }
+  catch(e){ toast("⚠ "+e.message); }
+});
+$("addLaptopBtn").addEventListener("click", ()=>{
+  const n = db.laptops.length + 1;
+  db.laptops.push({ id:"L"+pad(n), model:CONFIG.defaultModel, serial:"",
+    cls:"", teacher:"", season:"", year:"", start:"", end:"", history:[] });
+  renderAdmin(); toast("L"+pad(n)+" 추가됨 — 등록부 저장을 눌러 확정");
+});
+
+/* 배정 */
+$("assignBtn").addEventListener("click", async ()=>{
+  if(!selected.size) return toast("노트북을 먼저 탭해서 선택하세요");
+  const cls = $("fCls").value, teacher = $("fTeacher").value;
+  if(!cls) return toast("클래스를 선택하세요");
+  if(!teacher) return toast("선생님을 선택하세요");
+  db.laptops.forEach(l=>{
+    if(!selected.has(l.id)) return;
+    if(l.cls){                                     /* 재배정: 이전 기록을 이력으로 */
+      (l.history=l.history||[]).push({cls:l.cls,teacher:l.teacher,season:l.season,
+        year:l.year,start:l.start,end:l.end||todayISO()});
+    }
+    l.cls=cls; l.teacher=teacher; l.season=curSeason();
+    l.year=+$("fYear").value||new Date().getFullYear();
+    l.start=$("fStart").value||todayISO(); l.end=$("fEnd").value||"";
+  });
+  try{
+    await saveDb();
+    const n=selected.size; selected.clear();
+    renderStatus(); renderPicks();
+    toast(n+"대 → "+cls+" / "+teacher+" 배정 ✓");
+  }catch(e){ toast("⚠ "+e.message); }
+});
+
+/* 반납 */
+$("returnBtn").addEventListener("click", async ()=>{
+  const targets = db.laptops.filter(l=>selected.has(l.id)&&l.cls);
+  if(!targets.length) return toast("반납할 사용중 노트북을 선택하세요");
+  targets.forEach(l=>{
+    (l.history=l.history||[]).push({cls:l.cls,teacher:l.teacher,season:l.season,
+      year:l.year,start:l.start,end:todayISO()});
+    l.cls=""; l.teacher=""; l.season=""; l.year=""; l.start=""; l.end="";
+  });
+  try{
+    await saveDb();
+    const n=targets.length; selected.clear();
+    renderStatus(); renderPicks();
+    toast(n+"대 창고 반납 ✓ (이력 저장됨)");
+  }catch(e){ toast("⚠ "+e.message); }
+});
+$("clearSelBtn").addEventListener("click", ()=>{ selected.clear(); renderPicks(); });
+
+/* ══════════════ 시작 ══════════════ */
+(async function boot(){
+  initGis();
+  try{
+    await publicLoad();
+  }catch(e){
+    db = seedDb(); usingSeed = true;
+    const n = $("dbNotice"); n.style.display = "block";
+    n.innerHTML = e.message==="no-key"
+      ? "⚙ 설정 전 기본 현황입니다 — site-keys.js(apiKey)를 넣으면 실시간 데이터로 전환됩니다."
+      : "⚙ 아직 저장된 데이터가 없어 기본 현황을 표시합니다 — 관리자가 로그인하면 db가 생성됩니다.";
+  }
+  renderStatus();
+})();
+</script>
+</body>
+</html>
