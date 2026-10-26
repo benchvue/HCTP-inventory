@@ -246,7 +246,7 @@ const CATS = {
   robot:    { label:"Robot",       icon:"🤖" }
 };
 const LOCATIONS = [
-  "Room 212","Room 213","Room 213 창고","Room 214","Room 216","Room 218 창고","Jongbin House"
+  "Room 212","Room 213","Room 213 창고","Room 214","Room 216","Room 208 창고","Jongbin House"
 ];
 const CLASSES_HINT = ["Code Bridge","mBot2","Math Tutoring","EM Pray","Taekwondo","STEM Crafts"];
 
@@ -297,7 +297,7 @@ function seedDb(){
     ["speaker","Speaker #1","","Room 213 창고","","",""],
     ["label","Label Maker #1","","Room 213 창고","Brother PT-1280","",""]
   ];
-  for(let i=1;i<=9;i++) R.push(["robot","mBot2 #"+i,"","Room 218 창고","mBot2","",""]);
+  for(let i=1;i<=9;i++) R.push(["robot","mBot2 #"+i,"","Room 208 창고","mBot2","",""]);
   return { v:CONFIG.dbVersion, updated:0, by:"",
     items: R.map((r,i)=>({ id:"A"+pad(i+1), cat:r[0], nick:r[1], cls:r[2],
       loc:r[3], model:r[4], serial:r[5], status:r[6] })) };
@@ -333,16 +333,18 @@ async function publicLoad(){
 
 /* ══════════════ 룸맵 ══════════════ */
 const MAP_ROOMS = [
-  { key:"Room 211", x:6,   y:6,  w:96, h:66, name:"소예배실" },
-  { key:"Lobby",    x:6,   y:78, w:96, h:66, name:"2층 로비" },
-  { key:"Room 212", x:110, y:6,  w:70, h:66, name:"중등부" },
-  { key:"Room 213", x:186, y:6,  w:70, h:66, name:"고등부" },
-  { key:"Room 214", x:262, y:6,  w:70, h:66, name:"음악실" },
-  { key:"Room 215", x:110, y:78, w:50, h:66, name:"유아부" },
-  { key:"Room 216", x:166, y:78, w:50, h:66, name:"유치부" },
-  { key:"Room 217", x:222, y:78, w:50, h:66, name:"교실" },
-  { key:"Room 218", x:278, y:78, w:50, h:66, name:"중등부" },
-  { key:"Room 219", x:334, y:78, w:40, h:66, name:"고등부" }
+  /* 윗줄: 208 · 211 · 212 · 213 · 214 */
+  { key:"Room 208", x:6,   y:6,  w:68, h:66, name:"다용도실" },
+  { key:"Room 211", x:81,  y:6,  w:68, h:66, name:"소예배실" },
+  { key:"Room 212", x:156, y:6,  w:68, h:66, name:"중등부" },
+  { key:"Room 213", x:231, y:6,  w:68, h:66, name:"초등부" },
+  { key:"Room 214", x:306, y:6,  w:68, h:66, name:"찬양대실" },
+  /* 아랫줄: 215 · 216 · 217 · 218 · 219 */
+  { key:"Room 215", x:6,   y:78, w:68, h:66, name:"찬양대 연습실" },
+  { key:"Room 216", x:81,  y:78, w:68, h:66, name:"Class Room" },
+  { key:"Room 217", x:156, y:78, w:68, h:66, name:"교실" },
+  { key:"Room 218", x:231, y:78, w:68, h:66, name:"교실" },
+  { key:"Room 219", x:306, y:78, w:68, h:66, name:"교실" }
 ];
 function roomCount(key){
   return (db.items||[]).filter(it=> (it.loc||"").toLowerCase().startsWith(key.toLowerCase())).length;
